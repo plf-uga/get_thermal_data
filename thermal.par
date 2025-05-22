@@ -1,0 +1,18 @@
+[Camera]
+cam_name = test
+img_height = 350
+img_width = 650
+index = 0
+
+[Temperature]
+temp_max = 43
+temp_min = 20
+temp_trigger = 36
+
+[Time]
+duration = 59
+
+[Output]
+folder = /mnt/external/get_thermal_data/thermal_data
+
+
