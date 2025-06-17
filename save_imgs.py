@@ -114,7 +114,7 @@ def py_frame_callback(frame, userptr):
 
 # Thermal thread class
 class ThermalCaptureThread(threading.Thread):
-    def __init__(self, duration=60):
+    def __init__(self, duration, temp_min, temp_max, w, h, output_folder):
         super().__init__()
         self.running = threading.Event()
         self.running.set()
