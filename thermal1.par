@@ -1,0 +1,20 @@
+[Camera]
+cam_name = test
+img_height = 350
+img_width = 650
+index = 0
+
+[Temperature]
+temp_max = 39
+temp_min = 25
+temp_trigger = 35
+
+[Time]
+duration = 259
+
+[Output]
+folder = /home/alveslab/tc001_capture/get_thermal_data
+
+[Display]
+status = 1
+
