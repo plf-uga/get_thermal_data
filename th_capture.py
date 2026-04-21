@@ -28,7 +28,7 @@ def write_log(info, message, verbose=1):
 def load_config():
     """Load parameters from thermal.par."""
     config = configparser.ConfigParser()
-    config.read('thermal.par')
+    config.read('thermal1.par')
     cam_name = config.get('Camera', 'cam_name')
     h = config.getint('Camera', 'img_height')
     w = config.getint('Camera', 'img_width')
@@ -36,9 +36,10 @@ def load_config():
     temp_min = config.getint('Temperature', 'temp_min')
     thresh = config.getfloat('Temperature', 'temp_trigger')  
     duration = config.getint('Time', 'duration')
+    img_sec = config.getint('Time', 'img_sec')
     output = config.get('Output', 'folder')
     display = config.get('Display', 'status')
-    return cam_name, h, w, temp_max, temp_min, thresh, duration, output, display
+    return cam_name, h, w, temp_max, temp_min, thresh, duration, img_sec, output, display
 
 ##########################################################################
 #----------------------- TC001 FUNCTIONS ---------------------------------#
@@ -83,7 +84,7 @@ def get_tc001_index():
             ret, frame = cap.read()
             thdata, imdata = np.array_split(frame, 2)
             
-            if thdata.shape[2] == 2:
+            if thdata.shape[1] == W:
                 print(f"TC001 camera found at index {index}")
                 cap.release()                
                 i = index
@@ -120,7 +121,7 @@ def raw_to_celsius(raw):
 
     #Define regression parameters
     a = 0.0251859495852    
-    b = -100
+    b = -103.60947882
     
     return  a * raw + b
 
@@ -175,7 +176,7 @@ def capture_rgb(current_time):
 ##########################################################################
 
 # Load config
-cam_name, h, w, max_temp, min_temp, thresh, duration, output, display = load_config()
+cam_name, h, w, max_temp, min_temp, thresh, duration, img_sec, output, display = load_config()
 
 # Setup folders
 output_folder = os.path.join(output, f"{cam_name}_{datetime.now().strftime('%Y_%m_%d')}")
@@ -206,7 +207,7 @@ def main():
     global last_log_time
     start_time = time.time()
     box_size = 100  # half-size of square ROI
-    cooldown_sec = 2
+    cooldown_sec = 1/(img_sec + 1)
     last_trigger = 0
 
     while True:
@@ -242,7 +243,7 @@ def main():
 
         # Trigger based on relative threshold
         if roi_max > thresh and (time.time() - last_trigger) > cooldown_sec:
-            timestamp = datetime.now().strftime("%H%M%S")
+            timestamp = f"{datetime.now().strftime('%H:%M:%S')}.{datetime.now().microsecond // 1000:03d}" 
             # Save thermal
             cv2.imwrite(os.path.join(output_folder, "color_thermal", f"{timestamp}.jpg"),
                         thermal_norm)
@@ -250,6 +251,8 @@ def main():
             # Save RGB asynchronously
             threading.Thread(target=capture_rgb, args=(timestamp,)).start()
             write_log("INFO", f"Trigger detected! ROI mean={roi_max:.3f} | saved {timestamp}")
+            #print(raw.shape)
+            #print(thermal_norm.shape)
             last_trigger = time.time()
 
         # Optional display

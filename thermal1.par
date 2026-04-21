@@ -7,10 +7,11 @@ index = 0
 [Temperature]
 temp_max = 39
 temp_min = 25
-temp_trigger = 35
+temp_trigger = 32
 
 [Time]
-duration = 259
+duration = 59
+img_sec = 5
 
 [Output]
 folder = /home/alveslab/tc001_capture/get_thermal_data
