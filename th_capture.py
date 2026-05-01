@@ -7,6 +7,7 @@ import numpy as np
 from datetime import datetime
 import configparser
 
+
 ##########################################################################
 #----------------------- CONFIG / GLOBALS --------------------------------#
 ##########################################################################
@@ -28,7 +29,8 @@ def write_log(info, message, verbose=1):
 def load_config():
     """Load parameters from thermal.par."""
     config = configparser.ConfigParser()
-    config.read('thermal1.par')
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    config.read(os.path.join(BASE_DIR, 'thermal1.par'))
     cam_name = config.get('Camera', 'cam_name')
     h = config.getint('Camera', 'img_height')
     w = config.getint('Camera', 'img_width')
@@ -236,14 +238,14 @@ def main():
         roi = temp_c[top_left_y:bottom_right_y, top_left_x:bottom_right_x]
 
         #roi = thermal_norm[y1:y2, x1:x2]
-        roi_max = roi.max()
+        roi_max, roi_mean = roi.max(), roi.mean()
         max_temp_pos = np.unravel_index(np.argmax(roi), roi.shape)
         max_temp_x = top_left_x + max_temp_pos[1]
         max_temp_y = top_left_y + max_temp_pos[0]
 
         # Trigger based on relative threshold
-        if roi_max > thresh and (time.time() - last_trigger) > cooldown_sec:
-            timestamp = f"{datetime.now().strftime('%H:%M:%S')}.{datetime.now().microsecond // 1000:03d}" 
+        if roi_mean > thresh and (time.time() - last_trigger) > cooldown_sec:
+            timestamp = f"{datetime.now().strftime('%H_%M_%S')}.{datetime.now().microsecond // 1000:03d}" 
             # Save thermal
             cv2.imwrite(os.path.join(output_folder, "color_thermal", f"{timestamp}.jpg"),
                         thermal_norm)
