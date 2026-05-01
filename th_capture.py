@@ -252,7 +252,7 @@ def main():
             np.save(os.path.join(output_folder, "raw_thermal", f"{timestamp}.npy"), raw)
             # Save RGB asynchronously
             threading.Thread(target=capture_rgb, args=(timestamp,)).start()
-            write_log("INFO", f"Trigger detected! ROI mean={roi_max:.3f} | saved {timestamp}")
+            write_log("INFO", f"Trigger detected! ROI mean={roi_mean:.3f} | saved {timestamp}")
             #print(raw.shape)
             #print(thermal_norm.shape)
             last_trigger = time.time()
