@@ -169,7 +169,7 @@ def capture_rgb(current_time):
     if not ret:
         write_log("ERROR", "RGB frame failed")
         return
-    frame = cv2.resize(frame, (w, h))
+    #frame = cv2.resize(frame, (w, h))
     path = os.path.join(rgb_folder, f"{current_time}.jpg")
     cv2.imwrite(path, frame)
 
@@ -239,12 +239,14 @@ def main():
 
         #roi = thermal_norm[y1:y2, x1:x2]
         roi_max, roi_mean = roi.max(), roi.mean()
+        above_mask = roi >  32 
+        pct_above = 100.0 * np.mean(above_mask)
         max_temp_pos = np.unravel_index(np.argmax(roi), roi.shape)
         max_temp_x = top_left_x + max_temp_pos[1]
         max_temp_y = top_left_y + max_temp_pos[0]
 
         # Trigger based on relative threshold
-        if roi_mean > thresh and (time.time() - last_trigger) > cooldown_sec:
+        if roi_max > thresh and pct_above > 25 and (time.time() - last_trigger) > cooldown_sec:
             timestamp = f"{datetime.now().strftime('%H_%M_%S')}.{datetime.now().microsecond // 1000:03d}" 
             # Save thermal
             cv2.imwrite(os.path.join(output_folder, "color_thermal", f"{timestamp}.jpg"),
@@ -252,7 +254,7 @@ def main():
             np.save(os.path.join(output_folder, "raw_thermal", f"{timestamp}.npy"), raw)
             # Save RGB asynchronously
             threading.Thread(target=capture_rgb, args=(timestamp,)).start()
-            write_log("INFO", f"Trigger detected! ROI mean={roi_mean:.3f} | saved {timestamp}")
+            write_log("INFO", f"Trigger detected! ROI max={roi_max:.3f}, %Pixels > 32C = {pct_above:.2f} | saved {timestamp}")
             #print(raw.shape)
             #print(thermal_norm.shape)
             last_trigger = time.time()
