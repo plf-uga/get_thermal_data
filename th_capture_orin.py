@@ -198,7 +198,7 @@ def capture_rgb(current_time):
 ##########################################################################
 
 # Load config
-cam_name, h, w, max_temp, min_temp, thresh, duration, img_sec, output, display = load_config()
+cam_name, h, w, max_temp, min_temp, thresh, mask_temp, mask_perc, duration, img_sec, output, display = load_config()
 
 # Setup folders
 output_folder = os.path.join(output, f"{cam_name}_{datetime.now().strftime('%Y_%m_%d')}")
