@@ -1,5 +1,5 @@
 [Camera]
-cam_name = test
+cam_name = nano2
 img_height = 350
 img_width = 650
 index = 0
@@ -7,15 +7,17 @@ index = 0
 [Temperature]
 temp_max = 39
 temp_min = 25
-temp_trigger = 32
+temp_trigger = 22
+mask_temp = 20
+mask_perc = 30
 
 [Time]
 duration = 59
 img_sec = 5
 
 [Output]
-folder = /home/alveslab/tc001_capture/get_thermal_data
+folder = /mnt/external/th_data_output
 
 [Display]
-status = 1
+status = 0
 

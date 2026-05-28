@@ -30,18 +30,21 @@ def load_config():
     """Load parameters from thermal.par."""
     config = configparser.ConfigParser()
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    print(BASE_DIR)
     config.read(os.path.join(BASE_DIR, 'thermal1.par'))
     cam_name = config.get('Camera', 'cam_name')
     h = config.getint('Camera', 'img_height')
     w = config.getint('Camera', 'img_width')
     temp_max = config.getint('Temperature', 'temp_max')
     temp_min = config.getint('Temperature', 'temp_min')
-    thresh = config.getfloat('Temperature', 'temp_trigger')  
+    thresh = config.getfloat('Temperature', 'temp_trigger')
+    mask_temp = config.getfloat('Temperature', 'mask_temp')
+    mask_perc = config.getfloat('Temperature', 'mask_perc')
     duration = config.getint('Time', 'duration')
     img_sec = config.getint('Time', 'img_sec')
     output = config.get('Output', 'folder')
     display = config.get('Display', 'status')
-    return cam_name, h, w, temp_max, temp_min, thresh, duration, img_sec, output, display
+    return cam_name, h, w, temp_max, temp_min, thresh, mask_temp, mask_perc, duration, img_sec, output, display
 
 ##########################################################################
 #----------------------- TC001 FUNCTIONS ---------------------------------#
@@ -178,7 +181,7 @@ def capture_rgb(current_time):
 ##########################################################################
 
 # Load config
-cam_name, h, w, max_temp, min_temp, thresh, duration, img_sec, output, display = load_config()
+cam_name, h, w, max_temp, min_temp, thresh, mask_temp, mask_perc, duration, img_sec, output, display = load_config()
 
 # Setup folders
 output_folder = os.path.join(output, f"{cam_name}_{datetime.now().strftime('%Y_%m_%d')}")
@@ -239,14 +242,14 @@ def main():
 
         #roi = thermal_norm[y1:y2, x1:x2]
         roi_max, roi_mean = roi.max(), roi.mean()
-        above_mask = roi >  32 
+        above_mask = roi >  mask_temp 
         pct_above = 100.0 * np.mean(above_mask)
         max_temp_pos = np.unravel_index(np.argmax(roi), roi.shape)
         max_temp_x = top_left_x + max_temp_pos[1]
         max_temp_y = top_left_y + max_temp_pos[0]
 
         # Trigger based on relative threshold
-        if roi_max > thresh and pct_above > 25 and (time.time() - last_trigger) > cooldown_sec:
+        if roi_max > thresh and pct_above > mask_perc and (time.time() - last_trigger) > cooldown_sec:
             timestamp = f"{datetime.now().strftime('%H_%M_%S')}.{datetime.now().microsecond // 1000:03d}" 
             # Save thermal
             cv2.imwrite(os.path.join(output_folder, "color_thermal", f"{timestamp}.jpg"),
@@ -254,7 +257,7 @@ def main():
             np.save(os.path.join(output_folder, "raw_thermal", f"{timestamp}.npy"), raw)
             # Save RGB asynchronously
             threading.Thread(target=capture_rgb, args=(timestamp,)).start()
-            write_log("INFO", f"Trigger detected! ROI max={roi_max:.3f}, %Pixels > 32C = {pct_above:.2f} | saved {timestamp}")
+            write_log("INFO", f"Trigger detected! ROI max={roi_max:.3f}, %Pixels > {mask_temp}C = {pct_above:.2f} | saved {timestamp}")
             #print(raw.shape)
             #print(thermal_norm.shape)
             last_trigger = time.time()
