@@ -196,16 +196,21 @@ def capture_rgb(current_time):
 latest_rgb = None
 rgb_time = None
 
+
+stop_event = threading.Event()
 def rgb_loop():
     global latest_rgb
     global rgb_time
+    
 
-    while True:
+    while not stop_event.is_set():
         ret_rgb, frame_rgb = rgb_cap.read()
 
         if ret_rgb:
             latest_rgb = frame_rgb.copy()
             rgb_time = datetime.now()
+
+    print("RGB thread terminated")
 
 
 ##########################################################################
@@ -233,7 +238,8 @@ try:
     cap = get_tc001_camera(THERMAL_DEVICE)
     rgb_cap = get_rgb_camera(RGB_DEVICE)
     #Start the RGB independently
-    threading.Thread(target = rgb_loop, daemon = True).start()
+    rgb_thread = threading.Thread(target = rgb_loop, daemon = True)
+    rgb_thread.start()
 except RuntimeError as e:
     write_log("ERROR", f"Camera initialization failed: {e}")
     exit(1)
@@ -336,9 +342,16 @@ def main():
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
-    cap.release()
+    stop_event.set()
+    rgb_thread.join(timeout = 2)
+
+    time.sleep(0.2)
+    print("Releasing RGB camera")
     rgb_cap.release()
+    print("Releasing thermal camera")
+    cap.release()    
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()
