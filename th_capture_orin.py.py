@@ -1,0 +1,344 @@
+#!/usr/bin/env python
+import os
+import cv2
+import time
+import threading
+import numpy as np
+from datetime import datetime
+import configparser
+
+
+##########################################################################
+#----------------------- CONFIG / GLOBALS --------------------------------#
+##########################################################################
+
+BUF_SIZE = 2
+W = 256
+H = 392
+last_log_time = 0
+
+def write_log(info, message, verbose=1):
+    """Log message to file and optionally print to console."""
+    current_time = time.strftime('%Y/%m/%d %H:%M:%S', time.localtime())
+    cout = f'{info} {current_time} : {message}\n'
+    with open('thermal_outputs.log', 'a') as file:
+        if verbose:
+            print(cout.strip())
+        file.write(cout)
+
+def load_config():
+    """Load parameters from thermal.par."""
+    config = configparser.ConfigParser()
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    print(BASE_DIR)
+    config.read(os.path.join(BASE_DIR, 'thermal1.par'))
+    cam_name = config.get('Camera', 'cam_name')
+    h = config.getint('Camera', 'img_height')
+    w = config.getint('Camera', 'img_width')
+    temp_max = config.getint('Temperature', 'temp_max')
+    temp_min = config.getint('Temperature', 'temp_min')
+    thresh = config.getfloat('Temperature', 'temp_trigger')
+    mask_temp =  config.getfloat('Temperature', 'mask_temp')
+    mask_perc =  config.getfloat('Temperature', 'mask_perc')
+    duration = config.getint('Time', 'duration')
+    img_sec = config.getint('Time', 'img_sec')
+    output = config.get('Output', 'folder')
+    display = config.get('Display', 'status')
+    return cam_name, h, w, temp_max, temp_min, thresh, mask_temp, mask_perc, duration, img_sec, output, display
+
+##########################################################################
+#----------------------- TC001 FUNCTIONS ---------------------------------#
+##########################################################################
+
+def get_tc001_camera(device_path):
+    """Open TC001 camera and configure."""
+    cap = cv2.VideoCapture(device_path, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_CONVERT_RGB, 0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)    
+    
+    ret, frame = cap.read()
+    if ret:
+        try:
+            # just test split
+            thdata, imdata = np.array_split(frame, 2, axis=0)
+            write_log("INFO", f"TC001 found at {device_path}")
+            return cap
+        except Exception as e:
+            write_log("ERROR", f"Error extracting thermal data: {e}")
+            cap.release()
+    else:
+        write_log("ERROR", "Failed to capture from TC001")
+        cap.release()
+    raise RuntimeError(f"TC001 camera not found at {device_path}")
+
+
+def get_tc001_index():
+    """
+    Try to open the RGB and Thermal cameras with OpenCV by checking the expected dimensions.
+    """
+    i_th = None
+    i_rgb = None
+    num_cam = 0
+    max_cameras = 10  # You can adjust this depending on how many cameras you expect to connect
+    for index in range(max_cameras):
+        cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+        cap.set(cv2.CAP_PROP_CONVERT_RGB, 0)
+
+        try:
+            
+            ret, frame = cap.read()            
+            h1, w1, c1 = frame.shape
+            
+            if w1 == W:                
+                print(f"TC001 camera found at index {index}")
+                cap.release()                
+                i_th = index
+                num_cam = num_cam+1
+
+                if num_cam == 2:
+                    print("Both cameras found, exiting subroutine...")
+                    break
+                else:
+                    continue
+            elif w1 == 1280: #This is the expected resolution for the RGB camera
+                print(f"RGB camera found at index {index}")
+                i_rgb = index
+                cap.release()
+                num_cam = num_cam+1
+                if num_cam == 2:
+                    print("Both cameras found, exiting subroutine...")
+                    break
+                else:
+                    continue                        
+                
+        except:
+            write_log("ERROR", f"Failed to capture frame at index {index}")
+            cap.release()
+            continue
+    return i_th, i_rgb
+
+def extract_thermal(frame):
+
+    """Extract raw 16 bit frame"""
+    
+    thdata, imdata = np.array_split(frame,2)
+    lsb = thdata[:,:,0] 
+    hsb = thdata[:,:,1].astype(np.uint16) <<8  
+    
+    return lsb + hsb
+
+
+def raw_to_celsius(raw):
+    """
+    Since no calibration data is provided by the vendors. 
+    These regression parameters were obtained using a linear regression
+    temperature in Celsius in reference objects was measured with IR handheld digital thermometer
+    Tests were made at a distance of 0.5 m and room temperature of 25C
+    These are just rough values for reference, and should be updated in real conditions
+
+    """
+
+    #Define regression parameters
+    a = 0.0251859495852    
+    b = -103.60947882
+    
+    return  a * raw + b
+
+def get_heatmap(temp_c, min_temp, max_temp):
+    norm = np.clip((temp_c - min_temp) / (max_temp - min_temp), 0, 1)
+    norm = (norm * 255).astype(np.uint8)    
+    norm = norm.astype(np.uint8)
+    colored = cv2.applyColorMap(norm, cv2.COLORMAP_INFERNO)
+    return colored
+
+
+def display_temperature(img, val_c, loc, color, start_point, end_point):
+    """
+    Display the temperature at the given location on the image.
+    """
+    
+    cv2.putText(img, "{0:.2f}C".format(val_c), loc, cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2)
+    x, y = loc
+    cv2.line(img, (x - 2, y), (x + 2, y), color, 1)
+    cv2.line(img, (x, y - 2), (x, y + 2), color, 1)
+    cv2.rectangle(img, start_point, end_point, color, 1)
+    cv2.imshow('Thermal',img)
+
+
+##########################################################################
+#----------------------- RGB CAMERA --------------------------------------#
+##########################################################################
+
+def get_rgb_camera(device_path):
+    """Open RGB camera."""
+    cap = cv2.VideoCapture(device_path)
+    if cap.isOpened():
+        write_log("INFO", f"RGB camera found at {device_path}")
+        return cap
+    else:
+        write_log("ERROR", f"Failed to open RGB camera at {device_path}")
+        cap.release()
+        raise RuntimeError(f"RGB camera not found at {device_path}")
+
+def capture_rgb(current_time):
+    """Save RGB frame asynchronously."""
+    ret, frame = rgb_cap.read()
+    if not ret:
+        write_log("ERROR", "RGB frame failed")
+        return
+    #frame = cv2.resize(frame, (w, h))
+    path = os.path.join(rgb_folder, f"{current_time}.jpg")
+    cv2.imwrite(path, frame)
+
+latest_rgb = None
+rgb_time = None
+
+def rgb_loop():
+    global latest_rgb
+    global rgb_time
+
+    while True:
+        ret_rgb, frame_rgb = rgb_cap.read()
+
+        if ret_rgb:
+            latest_rgb = frame_rgb.copy()
+            rgb_time = datetime.now()
+
+
+##########################################################################
+#----------------------- MAIN PROGRAM ------------------------------------#
+##########################################################################
+
+# Load config
+cam_name, h, w, max_temp, min_temp, thresh, mask_temp, mask_perc, duration, img_sec, output, display = load_config()
+
+# Setup folders
+output_folder = os.path.join(output, f"{cam_name}_{datetime.now().strftime('%Y_%m_%d')}")
+os.makedirs(output_folder, exist_ok=True)
+os.makedirs(os.path.join(output_folder, "color_thermal"), exist_ok=True)
+os.makedirs(os.path.join(output_folder, "raw_thermal"), exist_ok=True)
+rgb_folder = os.path.join(output_folder, "RGB")
+os.makedirs(rgb_folder, exist_ok=True)
+
+# Detect camera devices
+tc_index, rgb_index = get_tc001_index()
+THERMAL_DEVICE = '/dev/video' + str(tc_index)
+RGB_DEVICE = '/dev/video' + str(rgb_index)  # assumes second camera
+
+# Init cameras
+try:
+    cap = get_tc001_camera(THERMAL_DEVICE)
+    rgb_cap = get_rgb_camera(RGB_DEVICE)
+    #Start the RGB independently
+    threading.Thread(target = rgb_loop, daemon = True).start()
+except RuntimeError as e:
+    write_log("ERROR", f"Camera initialization failed: {e}")
+    exit(1)
+
+
+
+
+##########################################################################
+#----------------------- CAMERA LOOP -------------------------------------#
+##########################################################################
+
+log_csv = os.path.join(output_folder, "sync_log.csv")
+with open(log_csv, "w") as f:
+    f.write(
+        "trigger_timestamp,"
+        "rgb_timestamp,"
+        "lag_seconds,"
+        "roi_max,"
+        "roi_mean\n"
+)
+
+
+def main():
+    global last_log_time
+    start_time = time.time()
+    box_size = 100  # half-size of square ROI
+    cooldown_sec = 1/(img_sec + 1)
+    last_trigger = 0
+
+    while True:
+        if (time.time() - start_time) > duration * 60:
+            write_log("INFO", "Duration completed")
+            break
+
+        ret, frame = cap.read()
+        if not ret:
+            write_log("ERROR", "Thermal frame read failed")
+            continue
+
+        raw = extract_thermal(frame)
+        temp_c = raw_to_celsius(raw)
+        thermal_norm = get_heatmap(temp_c, min_temp, max_temp)
+        h_img, w_img, ch = thermal_norm.shape
+
+        # ROI in center
+        cx, cy = w_img // 2, h_img // 2
+        #x1, y1 = max(cx - roi_size, 0), max(cy - roi_size, 0)
+        #x2, y2 = min(cx + roi_size, w_img), min(cy + roi_size, h_img)
+        top_left_x = cx - box_size // 2
+        top_left_y = cy - box_size // 2
+        bottom_right_x = cx + box_size // 2
+        bottom_right_y = cy + box_size // 2
+        roi = temp_c[top_left_y:bottom_right_y, top_left_x:bottom_right_x]
+
+        #roi = thermal_norm[y1:y2, x1:x2]
+        roi_max, roi_mean = roi.max(), roi.mean()
+        above_mask = roi >  mask_temp 
+        pct_above = 100.0 * np.mean(above_mask)
+        max_temp_pos = np.unravel_index(np.argmax(roi), roi.shape)
+        max_temp_x = top_left_x + max_temp_pos[1]
+        max_temp_y = top_left_y + max_temp_pos[0]
+
+        # Trigger based on relative threshold
+        if roi_max > thresh and pct_above > mask_perc and (time.time() - last_trigger) > cooldown_sec:
+            trigger_time = datetime.now()
+            timestamp = f"{trigger_time.strftime('%H_%M_%S')}.{trigger_time.microsecond // 1000:03d}" 
+            
+            # Save thermal
+            cv2.imwrite(os.path.join(output_folder, "color_thermal", f"{timestamp}.jpg"),
+                        thermal_norm)
+            np.save(os.path.join(output_folder, "raw_thermal", f"{timestamp}.npy"), raw)
+            # Save RGB 
+            if latest_rgb is not None and rgb_time is not None:
+
+                cv2.imwrite(os.path.join(output_folder, "RGB", f"{timestamp}.jpg"),latest_rgb)
+                lag = (rgb_time - trigger_time).total_seconds()
+                with open(log_csv, "a") as f:
+                    f.write(
+                            f"{timestamp},"
+                            f"{rgb_time.strftime('%H_%M_%S')}.{rgb_time.microsecond // 1000:03d},"
+                            f"{lag:.6f},"
+                            f"{roi_max:.3f},"
+                            f"{roi_mean:.3f}\n")
+
+
+                #write_log("INFO","LAG BETWEEN RGB AND THERMAL CAMERAS: {(rgb_time - trigger_time()).total_seconds()} sec") 
+
+            #threading.Thread(target=capture_rgb, args=(timestamp,)).start()
+            write_log("INFO", f"Trigger detected! ROI max={roi_max:.3f}, %Pixels > {mask_temp}C = {pct_above:.2f} | saved {timestamp}")
+            #print(raw.shape)
+            #print(thermal_norm.shape)
+            last_trigger = time.time()
+
+        # Optional display
+        if int(display) == 1:                                
+            
+            display_temperature(thermal_norm, roi_max, (max_temp_x, max_temp_y), (255, 255, 255), (top_left_x,top_left_y), (bottom_right_x, bottom_right_y))               
+
+            
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+    cap.release()
+    rgb_cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
