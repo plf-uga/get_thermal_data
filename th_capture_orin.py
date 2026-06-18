@@ -80,7 +80,7 @@ def get_tc001_index():
     i_th = None
     i_rgb = None
     num_cam = 0
-    max_cameras = 5  # You can adjust this depending on how many cameras you expect to connect
+    max_cameras = 10  # You can adjust this depending on how many cameras you expect to connect
     for index in range(max_cameras):
         cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
@@ -193,6 +193,21 @@ def capture_rgb(current_time):
     path = os.path.join(rgb_folder, f"{current_time}.jpg")
     cv2.imwrite(path, frame)
 
+latest_rgb = None
+rgb_time = None
+
+def rgb_loop():
+    global latest_rgb
+    global rgb_time
+
+    while True:
+        ret_rgb, frame_rgb = rgb_cap.read()
+
+        if ret_rgb:
+            latest_rgb = frame_rgb.copy()
+            rgb_time = datetime.now()
+
+
 ##########################################################################
 #----------------------- MAIN PROGRAM ------------------------------------#
 ##########################################################################
@@ -217,13 +232,29 @@ RGB_DEVICE = '/dev/video' + str(rgb_index)  # assumes second camera
 try:
     cap = get_tc001_camera(THERMAL_DEVICE)
     rgb_cap = get_rgb_camera(RGB_DEVICE)
+    #Start the RGB independently
+    threading.Thread(target = rgb_loop, daemon = True).start()
 except RuntimeError as e:
     write_log("ERROR", f"Camera initialization failed: {e}")
     exit(1)
 
+
+
+
 ##########################################################################
 #----------------------- CAMERA LOOP -------------------------------------#
 ##########################################################################
+
+log_csv = os.path.join(output_folder, "sync_log.csv")
+with open(log_csv, "w") as f:
+    f.write(
+        "trigger_timestamp,"
+        "rgb_timestamp,"
+        "lag_seconds,"
+        "roi_max,"
+        "roi_mean\n"
+)
+
 
 def main():
     global last_log_time
@@ -267,13 +298,30 @@ def main():
 
         # Trigger based on relative threshold
         if roi_max > thresh and pct_above > mask_perc and (time.time() - last_trigger) > cooldown_sec:
-            timestamp = f"{datetime.now().strftime('%H_%M_%S')}.{datetime.now().microsecond // 1000:03d}" 
+            trigger_time = datetime.now()
+            timestamp = f"{trigger_time.strftime('%H_%M_%S')}.{trigger_time.microsecond // 1000:03d}" 
+            
             # Save thermal
             cv2.imwrite(os.path.join(output_folder, "color_thermal", f"{timestamp}.jpg"),
                         thermal_norm)
             np.save(os.path.join(output_folder, "raw_thermal", f"{timestamp}.npy"), raw)
-            # Save RGB asynchronously
-            threading.Thread(target=capture_rgb, args=(timestamp,)).start()
+            # Save RGB 
+            if latest_rgb is not None and rgb_time is not None:
+
+                cv2.imwrite(os.path.join(output_folder, "RGB", f"{timestamp}.jpg"),latest_rgb)
+                lag = (rgb_time - trigger_time).total_seconds()
+                with open(log_csv, "a") as f:
+                    f.write(
+                            f"{timestamp},"
+                            f"{rgb_time.strftime('%H_%M_%S')}.{rgb_time.microsecond // 1000:03d},"
+                            f"{lag:.6f},"
+                            f"{roi_max:.3f},"
+                            f"{roi_mean:.3f}\n")
+
+
+                #write_log("INFO","LAG BETWEEN RGB AND THERMAL CAMERAS: {(rgb_time - trigger_time()).total_seconds()} sec") 
+
+            #threading.Thread(target=capture_rgb, args=(timestamp,)).start()
             write_log("INFO", f"Trigger detected! ROI max={roi_max:.3f}, %Pixels > {mask_temp}C = {pct_above:.2f} | saved {timestamp}")
             #print(raw.shape)
             #print(thermal_norm.shape)
